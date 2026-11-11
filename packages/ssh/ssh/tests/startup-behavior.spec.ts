@@ -66,6 +66,7 @@ function setup(options: {
   holdHello?: boolean
   holdConnect?: boolean
   forwardFailure?: Error
+  forwardFailureOnce?: boolean
   heartbeatFailure?: Error
   directoryFailure?: Error
 } = {}) {
@@ -95,9 +96,13 @@ function setup(options: {
   if (options.directoryFailure !== undefined) transport.directory.mockRejectedValueOnce(options.directoryFailure)
   transport.remove.mockResolvedValue(undefined)
   transport.spawn.mockReturnValue(child)
+  let forwarded = false
   transport.exec.mockImplementation((_file: string, args: string[], _options: unknown, callback: (error: Error | null) => void) => {
     const command = new Child()
-    queueMicrotask(() => { callback(args.includes('forward') ? options.forwardFailure ?? null : null); command.kill() })
+    const forward = args.includes('forward')
+    const fail = forward && options.forwardFailure !== undefined && (options.forwardFailureOnce !== true || !forwarded)
+    if (forward) forwarded = true
+    queueMicrotask(() => { callback(fail ? options.forwardFailure ?? null : null); command.kill() })
     return command
   })
   transport.connect.mockImplementation(() => {
@@ -255,6 +260,21 @@ describe.skipIf(process.platform === 'win32')('SSH connection startup', () => {
     await expect(test.service.connectStream({ path: '/tmp/remote-helper/control', capability: 'b'.repeat(64) })).rejects.toBe(failure)
     expect(transport.exec.mock.calls[1]?.[1]).toContain('cancel')
     expect(transport.connect).not.toHaveBeenCalled()
+  })
+
+  it('falls back to loopback TCP when stream-local forwarding is refused', async () => {
+    const test = setup({ forwardFailure: new Error('unknown channel type'), forwardFailureOnce: true })
+    await test.service.ready
+    const socket = await test.service.connectStream({
+      path: '/tmp/remote-helper/control', tcpPort: 4567, capability: 'b'.repeat(64),
+    })
+    expect(socket).toBe(test.secure)
+    const forwards = transport.exec.mock.calls
+      .map(call => call[1] as string[])
+      .filter(args => args.includes('forward'))
+    expect(forwards.length).toBeGreaterThanOrEqual(2)
+    expect(forwards[1]?.join(' ')).toContain('127.0.0.1:4567')
+    socket.destroy(new Error('data channel closed'))
   })
 
   it('keeps caller cancellation attached while a forwarded socket is connecting', async () => {

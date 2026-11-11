@@ -25,7 +25,7 @@ This fork adds the missing product surface:
   connection always uses `BatchMode=yes`, strict host-key checking, no agent
   forwarding, and an existing `known_hosts` entry.
 - `ssh`, `tar`, and a writable remote `$HOME` and `/tmp`.
-- The remote host must allow Unix-socket forwarding (OpenSSH default).
+- The remote host must allow Unix-socket forwarding (preferred) or TCP forwarding; the client tries Unix first and falls back to loopback TCP. Tailscale SSH, for example, supports only the TCP path.
 
 ## Build the helper
 
@@ -80,6 +80,13 @@ shares credentials, model settings, skills and the home patch by symlink, while
 Sessions and Workspaces stay isolated per host. This matches the way VS Code
 keeps one server-side data directory per remote.
 
+Process streams use a Unix-domain socket when the server permits
+`direct-streamlocal` forwarding. On servers that refuse it — Tailscale SSH is
+the common case — the helper also publishes a loopback TCP listener and the
+client forwards that instead. Both transports are authenticated by the same
+per-stream 256-bit TLS-PSK capability, so the fallback does not weaken stream
+authentication.
+
 ## Remote explorer
 
 Start the local Web UI (`pnpm dsh web`) and open **Remote SSH** in the left
@@ -121,6 +128,8 @@ rows where possible:
 - The helper archive is verified locally against its manifest and optional
   sibling checksum; the running helper's own digest is then verified by the
   `SshConnection` handshake.
+- Unix listeners live in a private `0700` directory with `0600` socket files.
+  The TCP fallback binds `127.0.0.1` only and still requires the TLS-PSK key.
 - The remote Web server binds loopback and uses DSH's normal launch-token and
   signed-cookie authentication. The local Web process starts it; the browser
   opens the tokenized URL.

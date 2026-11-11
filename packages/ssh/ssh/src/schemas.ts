@@ -91,7 +91,13 @@ export const helloSchema = z.object({
   bootstrapHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 }).strict()
 /** A prepared process publishes its sockets before target code may execute. */
-export const streamEndpointSchema = z.object({ path: remotePath, capability: z.string().regex(/^[0-9a-f]{64}$/) }).strict()
+export const streamEndpointSchema = z.object({
+  /** Unix-domain socket path, for servers that permit stream-local forwarding. */
+  path: remotePath,
+  /** Loopback TCP port, for servers that permit only TCP forwarding. */
+  tcpPort: z.number().int().min(1).max(65_535).optional(),
+  capability: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict()
 /** A stream capability reaches only the authenticated SSH client and its helper. */
 export type SshStreamEndpoint = z.infer<typeof streamEndpointSchema>
 /** Prepared process and its independently authenticated stream endpoints. */

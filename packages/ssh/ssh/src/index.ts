@@ -157,9 +157,44 @@ export class SshConnection extends Service {
     const hello = await this.ready
     this.assertOpen()
     signal = signal === undefined ? this.lifetime.signal : AbortSignal.any([signal, this.lifetime.signal])
-    const remote = endpoint.path
-    if (!remote.startsWith(`${hello.root}/`) || /[:\r\n\0]/u.test(remote)) throw new Error('SSH helper returned an invalid stream path')
-    signal.throwIfAborted()
+    if (!endpoint.path.startsWith(`${hello.root}/`) || /[:\r\n\0]/u.test(endpoint.path)) {
+      throw new Error('SSH helper returned an invalid stream path')
+    }
+    const attempts: { kind: 'unix' | 'tcp'; remote: string }[] = [{ kind: 'unix', remote: endpoint.path }]
+    if (endpoint.tcpPort !== undefined) {
+      if (!Number.isInteger(endpoint.tcpPort) || endpoint.tcpPort < 1 || endpoint.tcpPort > 65_535) {
+        throw new Error('SSH helper returned an invalid stream port')
+      }
+      attempts.push({ kind: 'tcp', remote: `127.0.0.1:${String(endpoint.tcpPort)}` })
+    }
+    const failures: { kind: string; error: unknown }[] = []
+    for (const attempt of attempts) {
+      signal.throwIfAborted()
+      try {
+        return await this.forwardStream(attempt.remote, endpoint.capability, signal)
+      } catch (error) {
+        signal.throwIfAborted()
+        failures.push({ kind: attempt.kind, error })
+      }
+    }
+    // A single-transport endpoint keeps its original failure identity; a
+    // dual-transport endpoint explains which paths were attempted.
+    const first = failures[0]
+    if (failures.length === 1 && first !== undefined) throw first.error
+    throw new Error(
+      `SSH stream connection failed (${failures.map(failure =>
+        `${failure.kind}: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`).join('; ')})`,
+    )
+  }
+
+  /**
+   * Establish one forwarded local socket and authenticate it with the stream capability.
+   * @param remote - remote Unix socket path or loopback `host:port`.
+   * @param capability - per-stream TLS-PSK key.
+   * @param signal - cancellation of forwarding and authentication.
+   * @returns the authenticated paused stream.
+   */
+  private async forwardStream(remote: string, capability: string, signal: AbortSignal): Promise<Socket> {
     const local = join(this.directory as string, `s${this.nextSocket++}`)
     const forward = `${local}:${remote}`
     const cancelForward = async (): Promise<void> => {
@@ -169,35 +204,45 @@ export class SshConnection extends Service {
     }
     try {
       await this.controlCommand(['-O', 'forward', '-o', 'ExitOnForwardFailure=yes', '-L', forward], signal)
-    } catch (error) { await cancelForward(); throw error }
+    } catch (error) {
+      await cancelForward()
+      throw error
+    }
     signal.throwIfAborted()
     const socket = createConnection({ path: local, allowHalfOpen: true })
     this.sockets.add(socket)
-    socket.once('close', () => {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = (): void => {
+          signal.removeEventListener('abort', aborted)
+          socket.off('connect', connected)
+          socket.off('error', failed)
+          socket.off('close', closed)
+        }
+        const connected = (): void => { cleanup(); resolve() }
+        const failed = (error: Error): void => { cleanup(); reject(error) }
+        const closed = (): void => { failed(new Error('SSH connection closed before stream establishment')) }
+        const aborted = (): void => { socket.destroy(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason))) }
+        socket.once('connect', connected)
+        socket.once('error', failed)
+        socket.once('close', closed)
+        signal.addEventListener('abort', aborted, { once: true })
+      })
+      const authenticated = await authenticateStream(socket, capability, this.config.requestTimeoutMs, signal)
+      socket.once('close', () => {
+        this.sockets.delete(socket)
+        void this.track(cancelForward()).catch(() => {})
+      })
+      this.sockets.add(authenticated)
+      authenticated.on('error', () => { authenticated.destroy() })
+      authenticated.once('close', () => { this.sockets.delete(authenticated) })
+      return authenticated
+    } catch (error) {
+      socket.destroy()
       this.sockets.delete(socket)
-      void this.track(cancelForward()).catch(() => {})
-    })
-    await new Promise<void>((resolve, reject) => {
-      const cleanup = (): void => {
-        signal.removeEventListener('abort', aborted)
-        socket.off('connect', connected)
-        socket.off('error', failed)
-        socket.off('close', closed)
-      }
-      const connected = (): void => { cleanup(); resolve() }
-      const failed = (error: Error): void => { cleanup(); reject(error) }
-      const closed = (): void => { failed(new Error('SSH connection closed before stream establishment')) }
-      const aborted = (): void => { socket.destroy(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason))) }
-      socket.once('connect', connected)
-      socket.once('error', failed)
-      socket.once('close', closed)
-      signal.addEventListener('abort', aborted, { once: true })
-    })
-    const authenticated = await authenticateStream(socket, endpoint.capability, this.config.requestTimeoutMs, signal)
-    this.sockets.add(authenticated)
-    authenticated.on('error', () => { authenticated.destroy() })
-    authenticated.once('close', () => { this.sockets.delete(authenticated) })
-    return authenticated
+      await cancelForward()
+      throw error
+    }
   }
 
   /** Tear down the helper's remote managed ranges before releasing the SSH master when reachable. */

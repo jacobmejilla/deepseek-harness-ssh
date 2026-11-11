@@ -17,8 +17,11 @@ import { SshRpcPeer } from './protocol.ts'
 type Request = z.infer<typeof spawnSchema>
 type Completion = z.infer<typeof doneSchema>
 type Channel = 'stdin' | 'stdout' | 'stderr' | 'control' | 'terminal'
-interface Endpoint extends SshStreamEndpoint {
-  server: Server
+interface Endpoint {
+  readonly path: string
+  readonly tcpPort?: number
+  readonly capability: string
+  readonly servers: Server[]
   connected: Promise<Socket>
   pending: Set<Socket>
   socket?: Socket
@@ -44,9 +47,12 @@ async function closeEndpoint(endpoint: Endpoint): Promise<void> {
     if (socket.closed) resolve()
     else socket.once('close', () => { resolve() })
   }))
-  const listenerClosed = new Promise<void>((resolve) => { endpoint.server.close(() => { resolve() }) })
+  const listenerClosed = endpoint.servers.map(server => new Promise<void>((resolve) => {
+    if (!server.listening) { resolve(); return }
+    server.close(() => { resolve() })
+  }))
   for (const socket of sockets) socket.destroy()
-  await Promise.all([listenerClosed, ...closed])
+  await Promise.all([...listenerClosed, ...closed])
 }
 
 /** Coalesce live tail updates while capture continues independently of network readers. */
@@ -134,8 +140,11 @@ export class RemoteProcesses {
       await record.preparing
       return {
         id,
-        streams: Object.fromEntries(Object.entries(record.endpoints).map(([name, endpoint]) =>
-          [name, { path: endpoint.path, capability: endpoint.capability }])),
+        streams: Object.fromEntries(Object.entries(record.endpoints).map(([name, endpoint]) => [name, {
+          path: endpoint.path,
+          ...(endpoint.tcpPort === undefined ? {} : { tcpPort: endpoint.tcpPort }),
+          capability: endpoint.capability,
+        }])),
       }
     } catch (error) {
       await this.release(id)
@@ -159,7 +168,7 @@ export class RemoteProcesses {
     try { await record.start }
     catch (error) {
       // AbortSignal reasons need not be Errors; retain the caller's rejection.
-      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+      // oxlint-disable-next-line typescript/prefer-promise-reject-errors -- Preserve the caller's arbitrary cancellation reason.
       const failed = Promise.reject<Completion>(error)
       void failed.catch(() => {})
       record.done = failed
@@ -421,33 +430,56 @@ export class RemoteProcesses {
   private async endpoint(path: string): Promise<Endpoint> {
     const connected = Promise.withResolvers<Socket>()
     const capability = randomBytes(32)
-    const server = createServer({
-      ...SSH_STREAM_TLS_OPTIONS, allowHalfOpen: true, handshakeTimeout: this.preparationMs,
-      pskCallback: (_socket, identity) => identity === 'dsh-stream' ? capability : null,
-    })
-    const endpoint: Endpoint = { path, capability: capability.toString('hex'), server, connected: connected.promise, pending: new Set() }
-    server.maxConnections = 8
     void connected.promise.catch(() => {})
-    server.on('connection', (socket: Socket) => {
-      endpoint.pending.add(socket)
-      socket.once('close', () => { endpoint.pending.delete(socket) })
-    })
-    server.on('tlsClientError', (_error, socket) => { socket.destroy() })
-    server.on('secureConnection', (socket) => {
-      if (endpoint.socket !== undefined) { socket.destroy(); return }
-      socket.disableRenegotiation()
-      socket.pause()
-      socket.on('error', () => {})
-      endpoint.socket = socket
-      server.close()
-      connected.resolve(socket)
-    })
-    server.on('error', (error) => { connected.reject(error) })
-    server.on('close', () => { if (endpoint.socket === undefined) connected.reject(new Error('SSH stream reservation closed')) })
+    const servers: Server[] = []
+    const endpoint: Endpoint = {
+      path, capability: capability.toString('hex'), servers, connected: connected.promise, pending: new Set(),
+    }
+    const attach = (server: Server): void => {
+      servers.push(server)
+      server.maxConnections = 8
+      server.on('connection', (socket: Socket) => {
+        endpoint.pending.add(socket)
+        socket.once('close', () => { endpoint.pending.delete(socket) })
+      })
+      server.on('tlsClientError', (_error, socket) => { socket.destroy() })
+      server.on('secureConnection', (socket) => {
+        if (endpoint.socket !== undefined) { socket.destroy(); return }
+        socket.disableRenegotiation()
+        socket.pause()
+        socket.on('error', () => {})
+        endpoint.socket = socket
+        for (const listener of servers) {
+          if (listener.listening) listener.close()
+        }
+        connected.resolve(socket)
+      })
+      server.on('error', (error) => { connected.reject(error) })
+    }
+    const tlsOptions = {
+      ...SSH_STREAM_TLS_OPTIONS, allowHalfOpen: true, handshakeTimeout: this.preparationMs,
+      pskCallback: (_socket: Socket, identity: string) => identity === 'dsh-stream' ? capability : null,
+    }
+    const unixServer = createServer(tlsOptions)
+    attach(unixServer)
     try {
-      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve) })
+      await new Promise<void>((resolve, reject) => {
+        unixServer.once('error', reject)
+        unixServer.listen(path, resolve)
+      })
       await chmod(path, 0o600)
-      return endpoint
+      // A loopback TCP listener is published alongside the Unix socket so
+      // servers that refuse stream-local forwarding (for example Tailscale SSH)
+      // can still carry the authenticated stream.
+      const tcpServer = createServer(tlsOptions)
+      attach(tcpServer)
+      await new Promise<void>((resolve, reject) => {
+        tcpServer.once('error', reject)
+        tcpServer.listen(0, '127.0.0.1', resolve)
+      })
+      const address = tcpServer.address()
+      if (typeof address !== 'object' || address === null) throw new Error('SSH TCP stream has no port')
+      return { ...endpoint, tcpPort: address.port }
     } catch (error) {
       await closeEndpoint(endpoint)
       throw error
