@@ -2,6 +2,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import type {} from '@deepseek-ai/dsh-fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
@@ -435,7 +436,9 @@ export class ApiSessionAgentController {
 
   private async createAgent(sessionId: SessionId, cwd: string, composition: ApiSessionComposition): Promise<Agent> {
     try {
-      await mkdir(cwd, { recursive: true })
+      // A remote execution world cannot create the directory through the host
+      // filesystem; that world's workspace registration owns the directory.
+      if (this.ctx.get('fs')?.executionWorld !== 'remote') await mkdir(cwd, { recursive: true })
     } catch (error: unknown) {
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }

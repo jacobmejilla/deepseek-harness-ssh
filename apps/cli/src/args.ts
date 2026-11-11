@@ -49,6 +49,13 @@ interface DumpConfigSchemaInvocation {
   patches: string[]
 }
 
+/** Manage SSH remote destinations and boot one remote workspace. */
+interface SshInvocation {
+  mode: 'ssh'
+  /** Raw arguments after `ssh`, parsed by the SSH command owner. */
+  args: string[]
+}
+
 /** Manage a profile's plugins: forward `args` to pnpm inside the profile directory. */
 interface PluginInvocation {
   mode: 'plugin'
@@ -58,7 +65,7 @@ interface PluginInvocation {
 }
 
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
-export type DshInvocation = ProfileInvocation | DumpConfigInvocation | DumpConfigSchemaInvocation | PluginInvocation
+export type DshInvocation = ProfileInvocation | DumpConfigInvocation | DumpConfigSchemaInvocation | PluginInvocation | SshInvocation
 
 /** Launcher flags for profile boot and configuration dumps. */
 interface BootOptions {
@@ -184,6 +191,19 @@ export function parseDshArgs(argv: readonly string[], version: string, manageDes
       resolved = resolveBoot(program, profile, options, args)
     })
 
+  if (first === 'ssh') {
+    program.command('ssh')
+      .description('discover SSH hosts, provision the remote helper, and open remote workspaces')
+      // The nested command owns its own help and flags; the launcher only
+      // reserves the name so it cannot be confused with a profile.
+      // The nested command owns its help so `dsh ssh --help` lists subcommands.
+      .helpOption(false)
+      .passThroughOptions()
+      .allowUnknownOption()
+      .argument('[args...]', 'SSH management arguments (list, add, probe, install, connect, remove)')
+      .action((args: string[]) => { resolved = { mode: 'ssh', args } })
+  }
+
   if (first === 'plugin') {
     const plugin = program.command('plugin').description('manage a profile\'s plugins by forwarding the remaining arguments to pnpm in the profile directory')
     plugin
@@ -203,7 +223,7 @@ export function parseDshArgs(argv: readonly string[], version: string, manageDes
   }
 
   try {
-    const expanded = first !== undefined && !first.startsWith('-') && first !== 'plugin'
+    const expanded = first !== undefined && !first.startsWith('-') && first !== 'plugin' && first !== 'ssh'
       ? ['--profile', ...argv]
       : argv
     program.parse(expanded, { from: 'user' })

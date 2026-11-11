@@ -47,6 +47,11 @@ export async function runCli(options: RunCliOptions = {}): Promise<void> {
       }
       break
     }
+    case 'ssh': {
+      const { runSsh } = await import('./ssh.ts')
+      process.exit(await runSsh(invocation.args))
+      break
+    }
     case 'plugin': {
       const { runPlugin } = await import('./plugin.ts')
       process.exit(await runPlugin(invocation.profile, invocation.args, options.packageManager))

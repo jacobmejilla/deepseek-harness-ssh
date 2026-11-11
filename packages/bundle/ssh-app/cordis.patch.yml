@@ -1,0 +1,78 @@
+# The dsh-ssh-app bundle patch: one remote POSIX execution world over an
+# already configured OpenSSH alias. Applied after dsh-base and dsh-web-app.
+#
+# Every deployment-specific value comes from the launcher environment:
+#   DSH_SSH_HOST, DSH_SSH_WORKSPACE, DSH_SSH_HELPER, DSH_SSH_HELPER_HASH,
+#   DSH_SSH_LAUNCH_KIND ('executable' or 'node-script'), DSH_SSH_NODE.
+# Launching this profile without them fails loudly in the ssh row schema.
+
+# ── replace the local execution providers ──────────────────────────────────
+
+- id: fs-sandbox
+  disabled: true
+
+- id: subprocess
+  disabled: true
+
+- id: sandbox
+  disabled: true
+
+- id: sandbox-policy
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.env.DSH_SSH_WORKSPACE
+
+# Session working directories default to the remote workspace.
+- id: working-directory
+  config:
+    defaultDirectory: !!js process.env.DSH_SSH_WORKSPACE
+
+# ── host-only consumers that cannot address a remote execution world ───────
+
+- id: open-in-app
+  disabled: true
+
+- id: file-reference-local
+  disabled: true
+
+- id: directory-picker
+  disabled: true
+
+- id: tool-fs-search
+  disabled: true
+
+- id: workspace-changes
+  disabled: true
+
+- id: deliverable-file-references
+  disabled: true
+
+- id: ui-open-in-app
+  disabled: true
+
+- id: ui-deliverables
+  disabled: true
+
+# ── the remote providers ──────────────────────────────────────────────────
+
+- insert:
+    - id: ssh
+      name: '@deepseek-ai/dsh-ssh'
+      config:
+        host: !!js process.env.DSH_SSH_HOST
+        launch: !!js >-
+          process.env.DSH_SSH_LAUNCH_KIND === 'node-script'
+            ? { kind: 'node-script', node: process.env.DSH_SSH_NODE }
+            : { kind: 'executable' }
+        helper: !!js process.env.DSH_SSH_HELPER
+        helperHash: !!js process.env.DSH_SSH_HELPER_HASH
+        workspace: !!js process.env.DSH_SSH_WORKSPACE
+
+    - id: fs-ssh
+      name: '@deepseek-ai/dsh-fs-ssh'
+
+    - id: subprocess-ssh
+      name: '@deepseek-ai/dsh-subprocess-ssh'
+
+    - id: sandbox-ssh
+      name: '@deepseek-ai/dsh-sandbox-ssh'

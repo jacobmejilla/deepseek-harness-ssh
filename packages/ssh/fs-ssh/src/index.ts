@@ -16,6 +16,9 @@ const errorCodes = new Set<string>(FS_ERROR_CODES)
 export class SshFileSystem extends FileSystem {
   static inject = ['ssh', 'sandboxPolicy']
 
+  /** SSH paths belong to the remote host, never the Harness host. */
+  override get executionWorld(): 'remote' { return 'remote' }
+
   override get sandboxMode(): SandboxMode { return this.ctx.sandboxPolicy.defaultMode }
 
   override async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {

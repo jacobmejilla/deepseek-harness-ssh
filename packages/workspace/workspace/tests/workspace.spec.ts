@@ -39,6 +39,8 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   sessionStore?: boolean
   backend?: StorageBackend
+  /** Virtual remote directories exposed through a fake remote `fs` service. */
+  remoteDirectories?: readonly string[]
 }
 
 /** Boot the real storage/domain/registry composition over controllable header-only peers. */
@@ -65,6 +67,18 @@ async function harness(options: HarnessOptions = {}) {
     ctx.provide('sessions', {
       get: (id: SessionId) => live.get(id),
       list: () => [...live.values()],
+    } as never)
+  }
+
+  if (options.remoteDirectories !== undefined) {
+    const directories = new Set(options.remoteDirectories)
+    ctx.provide('fs', {
+      executionWorld: 'remote',
+      resolve: async (path: string) => ({ targetKey: path }),
+      processPath: (target: { targetKey: unknown }) => String(target.targetKey),
+      stat: async (target: { targetKey: unknown }) => directories.has(String(target.targetKey))
+        ? { version: 'remote-version', type: 'directory' }
+        : undefined,
     } as never)
   }
 
@@ -1582,5 +1596,16 @@ describe('archive follow-up lifecycle', () => {
       expect(storedState(result.pool).archivedSessionIds).toEqual(['cleanup-error'])
       expect(warning).toHaveBeenCalled()
     } finally { await result.ctx.fiber.dispose() }
+  })
+})
+
+describe('remote execution worlds', () => {
+  it('registers and attaches a workspace whose directory exists only remotely', async () => {
+    const h = await harness({ remoteDirectories: ['/srv/project'], sessions: [header('remote-session', '/srv/project')] })
+    onTestFinished(() => h.ctx.fiber.dispose())
+    const workspace = await h.registry.create('/srv/project')
+    expect(workspace.path).toBe('/srv/project')
+    expect(workspace.sessionIds).toEqual(['remote-session'])
+    await expect(h.registry.create('/srv/missing')).rejects.toThrow()
   })
 })

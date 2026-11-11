@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH remote hosts",
+    "description": "Discover SSH hosts, provision the remote helper, and open remote workspaces."
+  }
+}

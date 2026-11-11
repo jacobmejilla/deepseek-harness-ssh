@@ -122,6 +122,16 @@ export abstract class FileSystem extends Service {
   }
 
   /**
+   * Whether paths name files in the Harness host's own filesystem, or in a
+   * separate execution world such as an SSH host. Host-side directory
+   * preparation may run only for `host`.
+   * @returns the backend's execution world kind.
+   */
+  get executionWorld(): 'host' | 'remote' {
+    return 'host'
+  }
+
+  /**
    * The sandbox mode this backend enforces on mutations BY DEFAULT, or
    * `undefined` when it does not confine at all — the capability fact the tool
    * layer reads to advertise the escalation fields honestly (mirrors

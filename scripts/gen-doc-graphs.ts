@@ -735,6 +735,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     note: 'Owns one authenticated OpenSSH connection, installed helper identity, independent program streams and disconnect cleanup for the paired remote providers.',
   },
   {
+    key: 'sshHosts',
+    pkg: 'ssh-hosts',
+    title: 'SSH remote workspace manager',
+    mode: 'service',
+    consumers: ['client-ui-ssh'],
+    note: 'Discovers OpenSSH destinations, verifies and installs the per-target helper archive, and owns detached remote Web processes and their browser-facing routes.',
+  },
+  {
     key: 'subprocess',
     pkg: 'subprocess',
     title: 'Subprocess seam',

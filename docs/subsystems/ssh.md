@@ -143,4 +143,54 @@ dispose(): Promise<void>
 ```
 
 Source: [`packages/ssh/ssh/src/index.ts`](../../packages/ssh/ssh/src/index.ts)
+
+<a id="ctxsshhosts--sshhosts"></a>
+
+### `ctx.sshHosts` — `SshHosts`
+
+SSH destination discovery, provisioning, and detached remote Web processes.
+
+```ts cordis-catalog
+/**
+ * Active remote connection facts for browser boot state.
+ * @returns the page's remote/local mode and active host when remote.
+ */
+bootState(): SshBootState
+
+/**
+ * Static boot state injected into the page.
+ * @returns the index-injection listener disposer.
+ */
+installBootState(): () => void
+
+/**
+ * List OpenSSH destinations and live remote servers.
+ * @returns the browser view.
+ */
+async list(): Promise<SshHostsView>
+
+/**
+ * Provision the remote helper and start a detached Web process.
+ * @param alias - OpenSSH alias.
+ * @param workspace - requested remote workspace; defaults to the remote home.
+ * @param port - requested loopback port.
+ * @returns the started server.
+ */
+async connect(alias: string, workspace?: string, port?: number): Promise<SshRemoteServer>
+
+/**
+ * Stop one managed remote Web process.
+ * @param alias - OpenSSH alias.
+ * @returns whether a process was stopped.
+ */
+stop(alias: string): boolean
+
+/**
+ * Stop every managed remote Web process.
+ * @returns nothing.
+ */
+dispose(): void
+```
+
+Source: [`packages/ssh/ssh-hosts/src/index.ts`](../../packages/ssh/ssh-hosts/src/index.ts)
 <!-- END GENERATED cordis-surface -->

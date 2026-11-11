@@ -109,6 +109,11 @@
     - id: directory-picker
       name: '@deepseek-ai/dsh-host-directory-picker-auto'
 
+    # SSH destination discovery, helper provisioning, and detached remote
+    # Web processes. The panel is contributed by ui-ssh below.
+    - id: ssh-hosts
+      name: '@deepseek-ai/dsh-ssh-hosts'
+
     # Read-only projection of current Loader entries for trusted client RPCs.
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
@@ -325,6 +330,11 @@
     # The right Sidebar's workspace file tree tab type.
     - id: ui-sidebar-files
       name: '@deepseek-ai/dsh-client-ui-sidebar-files'
+
+    # Left-sidebar Remote SSH page: host list, connect, and remote workspace
+    # opening. The panel is inert when the deployment mounts no SSH manager.
+    - id: ui-ssh
+      name: '@deepseek-ai/dsh-client-ui-ssh'
 
     - id: ui-settings
       name: '@deepseek-ai/dsh-client-ui-settings'

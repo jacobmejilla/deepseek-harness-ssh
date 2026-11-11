@@ -11,6 +11,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
+import type {} from '@deepseek-ai/dsh-fs'
 import { WorkspaceEntity } from './entity.ts'
 import type { WorkspaceEntityHost } from './entity.ts'
 
@@ -200,6 +201,8 @@ export class WorkspaceRegistry extends Service {
     table: () => this.requireTable(),
     candidateMatches: (id, path) => this.sessionPaths.get(id) === path || this.missingSessionPaths.has(id),
     readSessionHeader: id => this.readSessionHeader(id),
+    canonicalPath: path => this.canonicalPath(path),
+    isDirectory: path => this.isDirectory(path),
     rememberSessionPath: (id, path) => {
       this.sessionPaths.set(id, path)
       this.missingSessionPaths.delete(id)
@@ -252,8 +255,8 @@ export class WorkspaceRegistry extends Service {
   // drop the parameter with its @param clause and the `create(path, title?)`
   // lines in this package's README pair.
   async create(path: string, title?: string): Promise<Workspace> {
-    const canonical = await realpathNormalize(path)
-    if (!(await stat(canonical)).isDirectory()) {
+    const canonical = await this.canonicalPath(path)
+    if (!(await this.isDirectory(canonical))) {
       throw new Error(`cannot create a workspace at '${canonical}': path is not a directory`)
     }
     return await this.enqueueOperation(() => this.createCanonical(canonical, title))
@@ -282,8 +285,10 @@ export class WorkspaceRegistry extends Service {
 
       const path = await resolveDirectory()
       if (!fullyQualifiedWorkspacePath(path)) throw new TypeError(`Workspace path is not fully qualified: '${path}'`)
-      await mkdir(path, { recursive: true })
-      const canonical = await realpathNormalize(path)
+      // A remote execution world cannot create a directory through the host
+      // `mkdir`; its deployment owns the directory and registration validates it.
+      if (this.ctx.get('fs')?.executionWorld !== 'remote') await mkdir(path, { recursive: true })
+      const canonical = await this.canonicalPath(path)
       // A Session can start outside the registry queue while directory preparation awaits I/O.
       if ((await this.listStoredHeaders()).length > 0 || sessions.list().length > 0) return undefined
       return this.createCanonical(canonical, defaultWorkspaceTitle(path), true)
@@ -522,7 +527,7 @@ export class WorkspaceRegistry extends Service {
    * @returns the workspace owning the canonical path, when one exists.
    */
   async resolveByPath(path: string): Promise<Workspace | undefined> {
-    const canonical = await realpathNormalize(path)
+    const canonical = await this.canonicalPath(path)
     for (const entity of this.entities.values()) {
       if (entity.path === canonical) return entity
     }
@@ -806,6 +811,24 @@ export class WorkspaceRegistry extends Service {
     }
   }
 
+  /** Canonicalize in the composed filesystem, or on the host when none is mounted. */
+  private async canonicalPath(path: string): Promise<string> {
+    if (!fullyQualifiedWorkspacePath(path)) {
+      throw new TypeError(`Workspace path is not fully qualified: '${path}'`)
+    }
+    const fs = this.ctx.get('fs')
+    if (fs === undefined) return await realpathNormalize(path)
+    return fs.processPath(await fs.resolve(path))
+  }
+
+  /** Test a directory in the composed filesystem, or on the host when none is mounted. */
+  private async isDirectory(path: string): Promise<boolean> {
+    const fs = this.ctx.get('fs')
+    if (fs === undefined) return (await stat(path)).isDirectory()
+    const info = await fs.stat(await fs.resolve(path))
+    return info?.type === 'directory'
+  }
+
   private rebuildEntities(): void {
     this.entities.clear()
     for (const id of this.requireState().workspaceIds) {
@@ -835,18 +858,17 @@ export class WorkspaceRegistry extends Service {
       return
     }
     try {
-      const path = await realpathNormalize(header.cwd)
-      if (!(await stat(path)).isDirectory()) {
+      const path = await this.canonicalPath(header.cwd)
+      if (!(await this.isDirectory(path))) {
         this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' is not a directory`)
         return
       }
       this.sessionPaths.set(header.id, path)
       this.invalidSessionPaths.delete(header.id)
     } catch (error) {
-      if (fullyQualifiedWorkspacePath(header.cwd)
-        && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-        this.missingSessionPaths.add(header.id)
-      }
+      const missing = error instanceof Error && 'code' in error
+        && (error.code === 'ENOENT' || error.code === 'FS_NOT_FOUND')
+      if (fullyQualifiedWorkspacePath(header.cwd) && missing) this.missingSessionPaths.add(header.id)
       this.invalidSessionPaths.set(header.id, `cwd '${header.cwd}' does not resolve`)
     }
   }

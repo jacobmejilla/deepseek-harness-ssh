@@ -3830,6 +3830,49 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'sshHosts',
+    summary: 'SSH destination discovery, provisioning, and detached remote Web processes.',
+    description: 'SSH destination discovery, provisioning, and detached remote Web processes.',
+    methods: [
+      {
+        signature: 'bootState(): SshBootState',
+        description: 'Active remote connection facts for browser boot state.',
+        parameters: [],
+        returns: 'the page\'s remote/local mode and active host when remote.',
+      },
+      {
+        signature: 'installBootState(): () => void',
+        description: 'Static boot state injected into the page.',
+        parameters: [],
+        returns: 'the index-injection listener disposer.',
+      },
+      {
+        signature: 'async list(): Promise<SshHostsView>',
+        description: 'List OpenSSH destinations and live remote servers.',
+        parameters: [],
+        returns: 'the browser view.',
+      },
+      {
+        signature: 'async connect(alias: string, workspace?: string, port?: number): Promise<SshRemoteServer>',
+        description: 'Provision the remote helper and start a detached Web process.',
+        parameters: [{ name: 'alias', description: 'OpenSSH alias.' }, { name: 'workspace', description: 'requested remote workspace; defaults to the remote home.' }, { name: 'port', description: 'requested loopback port.' }],
+        returns: 'the started server.',
+      },
+      {
+        signature: 'stop(alias: string): boolean',
+        description: 'Stop one managed remote Web process.',
+        parameters: [{ name: 'alias', description: 'OpenSSH alias.' }],
+        returns: 'whether a process was stopped.',
+      },
+      {
+        signature: 'dispose(): void',
+        description: 'Stop every managed remote Web process.',
+        parameters: [],
+        returns: 'nothing.',
+      },
+    ],
+  },
+  {
     key: 'storage',
     summary: 'The storage hub service.',
     description: 'The storage hub service. Backends register under `backend`; data forms mount under their `StorageForms` key and are reached as `ctx.storage.<form>`.',
@@ -9684,6 +9727,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SpillSource',
     declaration: 'export type SpillSource = {\n    kind: \'tool\';\n    toolName: string;\n    callId: ToolCallId;\n    label: string;\n} | {\n    kind: \'session-reference\';\n    sessionId: SessionId;\n    label: string;\n};',
+  },
+  {
+    name: 'SshRemoteServer',
+    declaration: 'export interface SshRemoteServer {\n    readonly alias: string;\n    readonly url: string;\n    readonly pid: number;\n    readonly home: string;\n}',
   },
   {
     name: 'SshStreamEndpoint',
